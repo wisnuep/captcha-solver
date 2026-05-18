@@ -41,11 +41,11 @@ def load_model():
     model_path = "best_model.ckpt"
     if not os.path.exists(model_path):
         with st.spinner("⏳ Mendownload model dari Google Drive..."):
+            file_id = "1ikhPiNF2HQkwD5sf6qXdziGHZcqmeQlG"
             gdown.download(
-                "https://drive.google.com/file/d/1ikhPiNF2HQkwD5sf6qXdziGHZcqmeQlG/view?usp=sharing",
+                f"https://drive.google.com/uc?export=download&id={file_id}",
                 model_path,
-                quiet=False,
-                fuzzy=True
+                quiet=False
             )
     model = CaptchaModel.load_from_checkpoint(model_path, map_location="cpu")
     model.eval()
