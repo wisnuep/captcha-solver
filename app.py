@@ -7,8 +7,18 @@ from torchvision import transforms
 import torchvision.models as models
 import torch.nn as nn
 import lightning.pytorch as pl
+import torch.nn.functional as F
 
-# ── Model Definition ──────────────────────────────────────
+# ── Paksa tema putih ───────────────────────────────────────
+st.markdown("""
+    <style>
+        .stApp { background-color: #ffffff; color: #000000; }
+        .stMetric { background-color: #f0f2f6; border-radius: 10px; padding: 10px; }
+        .confidence-box { background-color: #f0f2f6; border-radius: 10px; padding: 15px; margin: 10px 0; }
+    </style>
+""", unsafe_allow_html=True)
+
+# ── Model Definition ───────────────────────────────────────
 class CaptchaModel(pl.LightningModule):
     def __init__(self, num_classes=6, num_characters=21, input_channels=1, learning_rate=1e-3):
         super(CaptchaModel, self).__init__()
@@ -35,7 +45,7 @@ DECODING_DICT = {
     15:"s", 16:"d", 17:"n", 18:"6", 19:"k", 20:"t"
 }
 
-# ── Download model dari Google Drive ──────────────────────
+# ── Load Model ─────────────────────────────────────────────
 @st.cache_resource
 def load_model():
     model_path = "best_model.ckpt"
@@ -51,7 +61,7 @@ def load_model():
     model.eval()
     return model
 
-# ── Prediksi ───────────────────────────────────────────────
+# ── Prediksi + Confidence ──────────────────────────────────
 def predict(model, image):
     transform = transforms.Compose([
         transforms.Resize((50, 250)),
@@ -63,11 +73,21 @@ def predict(model, image):
     img_tensor = transform(image.convert("RGB")).unsqueeze(0)
     with torch.inference_mode():
         out = model(img_tensor)
-    encoded = out.reshape(21, 6).argmax(0)
-    return "".join([DECODING_DICT[k.item()] for k in encoded])
+
+    # Reshape → (6 posisi, 21 karakter)
+    logits = out.reshape(21, 6).T         # (6, 21)
+    probs  = F.softmax(logits, dim=1)     # probabilitas tiap posisi
+
+    predicted_indices = probs.argmax(dim=1)  # index karakter terpilih
+    predicted_chars   = [DECODING_DICT[i.item()] for i in predicted_indices]
+    confidences       = [probs[i, predicted_indices[i]].item() * 100 for i in range(6)]
+
+    result     = "".join(predicted_chars)
+    avg_conf   = sum(confidences) / len(confidences)
+    return result, confidences, avg_conf
 
 # ── Tampilan ───────────────────────────────────────────────
-st.set_page_config(page_title="CAPTCHA Solver", page_icon="🤖")
+st.set_page_config(page_title="CAPTCHA Solver", page_icon="🤖", layout="centered")
 st.title("🤖 CAPTCHA Solver")
 st.write("Upload gambar CAPTCHA, model akan menebak teksnya.")
 st.markdown("---")
@@ -79,8 +99,29 @@ uploaded_file = st.file_uploader("📁 Upload gambar CAPTCHA (.jpeg / .png)", ty
 if uploaded_file:
     image = Image.open(uploaded_file)
     st.image(image, caption="Gambar yang diupload", use_container_width=True)
+
     with st.spinner("🔍 Sedang menganalisis..."):
-        result = predict(model, image)
+        result, confidences, avg_conf = predict(model, image)
+
     st.markdown("---")
+
+    # Hasil prediksi
     st.success(f"✅ Hasil Prediksi: **{result.upper()}**")
     st.metric(label="Teks CAPTCHA", value=result.upper())
+
+    st.markdown("---")
+
+    # Confidence score keseluruhan
+    st.subheader("📊 Confidence Score")
+    color = "green" if avg_conf >= 90 else "orange" if avg_conf >= 70 else "red"
+    st.markdown(f"**Rata-rata Confidence: :{color}[{avg_conf:.2f}%]**")
+    st.progress(avg_conf / 100)
+
+    # Confidence per karakter
+    st.markdown("**Detail per Karakter:**")
+    cols = st.columns(6)
+    for i, (char, conf) in enumerate(zip(result.upper(), confidences)):
+        with cols[i]:
+            st.metric(label=f"Char {i+1}", value=char)
+            color = "🟢" if conf >= 90 else "🟡" if conf >= 70 else "🔴"
+            st.caption(f"{color} {conf:.1f}%")
